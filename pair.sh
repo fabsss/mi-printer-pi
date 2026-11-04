@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# Koppelt den Mi Portable Photo Printer per Bluetooth (einmalig).
-# Drucker einschalten (Taste halten bis LED blinkt) und NICHT mit dem Handy verbunden lassen.
+# Pairs the Mi Portable Photo Printer over Bluetooth (one-time).
+# Switch the printer on and do NOT leave it connected to your phone.
 set -euo pipefail
 MAC="${1:-}"
 
-command -v bluetoothctl >/dev/null || { echo "bluez fehlt: sudo apt install bluez"; exit 1; }
+command -v bluetoothctl >/dev/null || { echo "bluez missing: sudo apt install bluez"; exit 1; }
 sudo rfkill unblock bluetooth || true
 sudo systemctl enable --now bluetooth >/dev/null
 
 if [ -z "$MAC" ]; then
-  echo "Suche 15 s nach Geräten ..."
+  echo "Scanning for devices for 15 s ..."
   bluetoothctl --timeout 15 scan on | grep -i -E "NEW|printer|mi |xiaomi|hannto" || true
   echo
   bluetoothctl devices
   echo
-  read -r -p "MAC-Adresse des Druckers (z.B. F0:13:C1:3F:63:94): " MAC
+  read -r -p "Printer MAC address (e.g. F0:13:C1:3F:63:94): " MAC
 fi
 
-echo "Koppeln mit $MAC ..."
+echo "Pairing with $MAC ..."
 bluetoothctl power on
-bluetoothctl pair "$MAC" || echo "(pair meldete Fehler - evtl. schon gekoppelt)"
+bluetoothctl pair "$MAC" || echo "(pair reported an error - maybe already paired)"
 bluetoothctl trust "$MAC"
 bluetoothctl info "$MAC" | grep -E "Name|Paired|Trusted|UUID" || true
 echo
-echo "Trage '$MAC' als \"address\" in /etc/mizink/config.json ein."
+echo "Set '$MAC' as \"address\" in /etc/mizink/config.json."

@@ -1,5 +1,5 @@
 [Unit]
-Description=Xiaomi Mi Portable Photo Printer - Druck-Worker (Bluetooth)
+Description=Xiaomi Mi Portable Photo Printer - print worker (Bluetooth)
 After=bluetooth.target
 Wants=bluetooth.target
 

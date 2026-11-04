@@ -1,12 +1,11 @@
-"""Bluetooth-Classic-Transport für Linux (Raspberry Pi OS / BlueZ).
+"""Bluetooth Classic transport for Linux (Raspberry Pi OS / BlueZ).
 
-Ersetzt das macOS-Modul (IOBluetooth) des Upstream-Projekts. Der Drucker spricht das
-Hannto-Protokoll über RFCOMM Kanal 1 (Serial Port Profile). Python bringt dafür
-Kernel-Sockets mit (`socket.AF_BLUETOOTH` / `BTPROTO_RFCOMM`), es ist also weder
-`rfcomm bind` noch pyserial nötig. Die Schnittstelle (`Connection`) ist identisch zur
-macOS-Variante, damit `printer.py` unverändert bleibt.
+Replaces the upstream macOS module (IOBluetooth). The printer speaks the Hannto protocol
+over RFCOMM channel 1 (Serial Port Profile). Python ships kernel sockets for this
+(`socket.AF_BLUETOOTH` / `BTPROTO_RFCOMM`), so neither `rfcomm bind` nor pyserial is needed.
+The interface (`Connection`) matches the macOS variant so `printer.py` stays unchanged.
 
-Der Drucker muss vorher einmalig per `bluetoothctl` gekoppelt (pair + trust) werden.
+The printer must be paired once beforehand via `bluetoothctl` (pair + trust).
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ RFCOMM_CHANNEL = 1
 
 
 class Connection:
-    """Offener RFCOMM-Kanal zum Drucker. Als Context-Manager verwendbar."""
+    """Open RFCOMM channel to the printer. Usable as a context manager."""
 
     def __init__(self, address: str, on_data=None, verbose: bool = False):
         self.address = address.replace("-", ":").upper()
@@ -32,7 +31,7 @@ class Connection:
     # -- lifecycle -------------------------------------------------------
     def open(self, timeout: float = 20.0) -> "Connection":
         if not hasattr(socket, "AF_BLUETOOTH"):
-            raise ConnectionError("Dieses Python hat keine Bluetooth-Socket-Unterstützung (nur Linux).")
+            raise ConnectionError("This Python has no Bluetooth socket support (Linux only).")
         s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
         s.settimeout(timeout)
         try:
@@ -40,9 +39,9 @@ class Connection:
         except OSError as e:
             s.close()
             raise ConnectionError(
-                f"RFCOMM-Verbindung zu {self.address} fehlgeschlagen: {e}. "
-                "Drucker eingeschaltet? Gekoppelt (bluetoothctl pair/trust)? "
-                "Nicht gleichzeitig vom Handy/Mi Home verbunden?") from e
+                f"RFCOMM connection to {self.address} failed: {e}. "
+                "Printer switched on? Paired (bluetoothctl pair/trust)? "
+                "Not connected to the phone / Mi Home at the same time?") from e
         s.setblocking(False)
         self._sock = s
         self._closed = False
@@ -96,7 +95,7 @@ class Connection:
         return data
 
     def pump(self, seconds: float) -> None:
-        """Empfängt bis zu `seconds` lang Daten (kehrt früher zurück, wenn Daten da waren)."""
+        """Receive data for up to `seconds`."""
         if self._sock is None:
             time.sleep(seconds)
             return
@@ -117,7 +116,7 @@ class Connection:
             except OSError:
                 self._closed = True
                 return
-            if not chunk:  # Gegenstelle hat geschlossen
+            if not chunk:  # peer closed the connection
                 self._closed = True
                 return
             self._sink(chunk)

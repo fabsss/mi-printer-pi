@@ -1,10 +1,10 @@
-"""mizink-worker: Hintergrunddienst, der die Warteschlange abarbeitet und die
-Bluetooth-Verbindung zum Drucker hält (inkl. Auto-Reconnect und Keep-Alive).
+"""mizink-worker: background service that works through the queue and holds the
+Bluetooth connection to the printer (with auto-reconnect and keep-alive).
 
-Zusätzliche Optionen in /etc/mizink/config.json (alle optional):
-  "fit":        "cover" (Standard, füllt, beschneidet Ränder) | "contain" | "stretch"
-  "rotate":     "auto" (Standard: Querformat -> 90° drehen) | "none"
-  "keep_awake": true (Standard, Drucker bleibt an) | false (Verbindung nur bei Aufträgen)
+Additional options in /etc/mizink/config.json (all optional):
+  "fit":        "cover" (default, fills, crops edges) | "contain" | "stretch"
+  "rotate":     "auto" (default: rotate landscape by 90°) | "none"
+  "keep_awake": true (default, printer stays on) | false (connect only for jobs)
   "max_attempts": 3
 """
 
@@ -53,7 +53,7 @@ class Worker:
         except OSError:
             pass
 
-    # -- Aufträge --------------------------------------------------------
+    # -- Jobs --------------------------------------------------------
     def _prepare_image(self, path: Path):
         from PIL import Image, ImageOps
         im = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
@@ -67,30 +67,36 @@ class Worker:
         if meta["attempts"] >= self.max_attempts:
             failed = self.spool / "failed"
             failed.mkdir(exist_ok=True)
-            log.error("Auftrag %s endgültig fehlgeschlagen: %s", meta_path.stem, err)
+            log.error("Job %s failed permanently: %s", meta_path.stem, err)
             for p in (meta_path, self.spool / meta["image"]):
                 if p.exists():
                     os.replace(p, failed / p.name)
         else:
-            log.warning("Auftrag %s Versuch %d/%d fehlgeschlagen: %s",
+            log.warning("Job %s attempt %d/%d failed: %s",
                         meta_path.stem, meta["attempts"], self.max_attempts, err)
             meta_path.write_text(json.dumps(meta))
 
     def process_queue(self, printer: Printer) -> int:
-        """Druckt alle wartenden Aufträge. Wirft bei Verbindungsproblemen weiter."""
+        """Print all waiting jobs. Re-raises on connection problems."""
         done = 0
         for meta_path in _spool.pending(self.spool):
             if self._stop:
                 break
             try:
                 meta = json.loads(meta_path.read_text())
+                if meta["image"] != meta_path.stem + ".img":
+                    raise ValueError("image name does not match job id")
                 img_path = self.spool / meta["image"]
-            except (OSError, ValueError, KeyError) as e:
-                log.error("Defekte Meta-Datei %s: %s", meta_path, e)
+                if img_path.is_symlink() or meta_path.is_symlink() or not img_path.is_file():
+                    raise ValueError("image missing or symlink")
+                if not 1 <= int(meta.get("copies", 1)) <= 10:
+                    raise ValueError("invalid copies")
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                log.error("Corrupt meta file %s: %s", meta_path, e)
                 meta_path.rename(meta_path.with_suffix(".bad"))
                 continue
             self.set_status("printing")
-            log.info("Drucke %s (%s, %dx)", meta_path.stem, meta.get("source"), meta.get("copies", 1))
+            log.info("Printing %s (%s, %dx)", meta_path.stem, meta.get("source"), meta.get("copies", 1))
             try:
                 printer.print_image(self._prepare_image(img_path), copies=meta.get("copies", 1),
                                     fit=self.fit, wait=True)
@@ -101,10 +107,10 @@ class Worker:
                 p.unlink(missing_ok=True)
             self.last_error = None
             done += 1
-            log.info("Fertig: %s", meta_path.stem)
+            log.info("Done: %s", meta_path.stem)
         return done
 
-    # -- Hauptschleife ---------------------------------------------------
+    # -- Main loop ---------------------------------------------------
     def stop(self, *_):
         self._stop = True
 
@@ -117,7 +123,7 @@ class Worker:
                     time.sleep(1)
                     continue
                 with self.printer_factory() as p:
-                    log.info("Verbunden mit %s", p.address)
+                    log.info("Connected to %s", p.address)
                     backoff = 3.0
                     self.set_status("connected")
                     last_ping = 0.0
@@ -137,11 +143,11 @@ class Worker:
                                             printer_error=st.get("error"))
                         p.conn.pump(0.5)
                     if not p.conn.is_open and not self._stop:
-                        log.warning("Verbindung vom Drucker getrennt")
+                        log.warning("Connection closed by printer")
             except (OSError, ConnectionError, PrinterError) as e:
                 self.last_error = str(e)
                 self.set_status("offline")
-                log.warning("Drucker nicht erreichbar/Fehler: %s (neuer Versuch in %.0fs)", e, backoff)
+                log.warning("Printer unreachable/error: %s (retrying in %.0fs)", e, backoff)
                 end = time.time() + backoff
                 while time.time() < end and not self._stop:
                     time.sleep(0.5)

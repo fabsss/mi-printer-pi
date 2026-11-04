@@ -1,4 +1,4 @@
-"""Offline-Tests (ohne Drucker/Bluetooth): python3 -m unittest discover -s tests -v"""
+"""Offline tests (no printer/Bluetooth needed): python3 -m unittest discover -s tests -v"""
 import io
 import json
 import os
@@ -20,7 +20,7 @@ TOKEN = "00112233445566778899aabb"
 
 
 class FakeConn:
-    """Simuliert die Drucker-Seite des Protokolls (Basil, RC4)."""
+    """Simulates the printer side of the protocol (Basil, RC4)."""
 
     def __init__(self, cipher):
         self.cipher, self.rx, self.file, self.methods = cipher, bytearray(), bytearray(), []
@@ -54,7 +54,7 @@ class FakeConn:
                 self._reply(j["id"], [{"job_state": "finished", "prt_copies": 1}])
             elif m == "retime":
                 self._reply(j["id"], ["OK"])
-            # clean_data: keine Antwort (wie am echten Drucker)
+            # clean_data: no reply (like the real printer)
 
     def read_available(self):
         d = bytes(self.rx)

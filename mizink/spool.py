@@ -1,8 +1,8 @@
-"""Druck-Warteschlange (Spool-Verzeichnis) und der schnelle `mizink-enqueue`-Befehl.
+"""Print queue (spool directory) and the fast `mizink-enqueue` command.
 
-Die Photobooth-App erlaubt einem Druckbefehl nur 6 Sekunden Laufzeit, ein ZINK-Druck
-dauert aber ~40-60 s. Deshalb legt `mizink-enqueue` das Bild nur in die Warteschlange
-(Millisekunden) und der Dienst `mizink-worker` druckt es im Hintergrund.
+The photobooth-app allows a print command only 6 seconds, but a ZINK print takes ~40-60 s.
+So `mizink-enqueue` only places the image in the queue (milliseconds) and the
+`mizink-worker` service prints it in the background.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def status_path() -> Path:
 
 
 def pending(spool: Path) -> list[Path]:
-    """Meta-Dateien aller wartenden Aufträge, älteste zuerst."""
+    """Meta files of all waiting jobs, oldest first."""
     return sorted(spool.glob("*.json"))
 
 
@@ -38,15 +38,15 @@ def enqueue(src: str | Path, copies: int = 1, max_queue: int = 10, spool: Path |
     spool = spool or spool_dir()
     src = Path(src)
     if not src.is_file():
-        raise FileNotFoundError(f"Datei nicht gefunden: {src}")
+        raise FileNotFoundError(f"File not found: {src}")
     if src.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError(f"Datei zu groß (> {MAX_FILE_BYTES // 1024 // 1024} MB): {src}")
+        raise ValueError(f"File too large (> {MAX_FILE_BYTES // 1024 // 1024} MB): {src}")
     if not 1 <= copies <= 10:
-        raise ValueError("copies muss zwischen 1 und 10 liegen")
+        raise ValueError("copies must be between 1 and 10")
     if not spool.is_dir():
-        raise FileNotFoundError(f"Spool-Verzeichnis fehlt: {spool} (install.sh ausgeführt?)")
+        raise FileNotFoundError(f"Spool directory missing: {spool} (did you run install.sh?)")
     if len(pending(spool)) >= max_queue:
-        raise RuntimeError(f"Warteschlange voll ({max_queue} Aufträge) - Drucker offline oder Papier leer?")
+        raise RuntimeError(f"Queue full ({max_queue} jobs) - printer offline or out of paper?")
 
     job = f"{time.time_ns()}-{uuid.uuid4().hex[:6]}"
     img_tmp, img = spool / f".{job}.tmp", spool / f"{job}.img"
@@ -55,7 +55,7 @@ def enqueue(src: str | Path, copies: int = 1, max_queue: int = 10, spool: Path |
     meta_tmp, meta = spool / f".{job}.meta.tmp", spool / f"{job}.json"
     meta_tmp.write_text(json.dumps({"image": img.name, "copies": copies, "attempts": 0,
                                     "source": src.name, "queued_at": time.time()}))
-    os.replace(meta_tmp, meta)  # erst jetzt sichtbar für den Worker
+    os.replace(meta_tmp, meta)  # only now visible to the worker
     return meta
 
 
@@ -68,20 +68,20 @@ def _read_status() -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="mizink-enqueue",
-                                 description="Bild in die Druckwarteschlange des Mi-Photo-Printers legen.")
-    ap.add_argument("image", nargs="?", help="Bilddatei (JPEG/PNG)")
+                                 description="Queue an image for the Mi Portable Photo Printer.")
+    ap.add_argument("image", nargs="?", help="image file (JPEG/PNG)")
     ap.add_argument("--copies", type=int, default=1)
     ap.add_argument("--max-queue", type=int, default=10)
-    ap.add_argument("--status", action="store_true", help="Status des Worker-Dienstes anzeigen")
+    ap.add_argument("--status", action="store_true", help="show worker service status")
     a = ap.parse_args(argv)
 
     if a.status:
         st = _read_status()
-        print(json.dumps(st, indent=2) if st else "Kein Status (läuft mizink-worker?)")
-        print(f"wartende Aufträge: {len(pending(spool_dir())) if spool_dir().is_dir() else '?'}")
+        print(json.dumps(st, indent=2) if st else "No status (is mizink-worker running?)")
+        print(f"queued jobs: {len(pending(spool_dir())) if spool_dir().is_dir() else '?'}")
         return 0
     if not a.image:
-        ap.error("Bilddatei fehlt")
+        ap.error("image file missing")
     try:
         meta = enqueue(a.image, a.copies, a.max_queue)
     except Exception as e:
@@ -89,7 +89,7 @@ def main(argv=None) -> int:
         return 1
     st = _read_status()
     note = "" if st.get("state") in ("connected", "printing") else \
-        f" (Drucker aktuell: {st.get('state', 'unbekannt')} - Auftrag wartet)"
+        f" (printer currently: {st.get('state', 'unknown')} - job is waiting)"
     print(f"queued {meta.stem}{note}")
     return 0
 
