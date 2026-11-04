@@ -1,0 +1,24 @@
+[Unit]
+Description=Xiaomi Mi Portable Photo Printer - Druck-Worker (Bluetooth)
+After=bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=mizink
+Group=mizink
+SupplementaryGroups=bluetooth
+Environment=MIZINK_CONFIG=/etc/mizink/config.json
+Environment=PYTHONPATH=/opt/mizink/lib
+Environment=PYTHONUNBUFFERED=1
+RuntimeDirectory=mizink
+ExecStart=/usr/bin/python3 -m mizink.worker
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/spool/mizink
+
+[Install]
+WantedBy=multi-user.target
