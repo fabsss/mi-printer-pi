@@ -19,7 +19,7 @@ find /opt/mizink/lib -name __pycache__ -prune -exec rm -rf {} +
 cp "$HERE/LICENSE.mizink" /opt/mizink/
 
 echo "==> Creating wrapper commands"
-for pair in "mizink-enqueue:mizink.spool" "mizink:mizink.cli"; do
+for pair in "mizink-enqueue:mizink.spool" "mizink:mizink.cli" "mizink-lpstat:mizink.lpstat_shim"; do
   name="${pair%%:*}"; mod="${pair##*:}"
   cat > "/usr/local/bin/$name" <<WRAP
 #!/bin/sh
@@ -27,6 +27,15 @@ PYTHONPATH=/opt/mizink/lib MIZINK_CONFIG=\${MIZINK_CONFIG:-/etc/mizink/config.js
 WRAP
   chmod 755 "/usr/local/bin/$name"
 done
+
+echo "==> lpstat shim (lets the photobooth-app's \"check if printer is idle\" see the printer state)"
+# The app calls `lpstat -p <name>` with a minimal PATH (/bin:/usr/bin), so it must live in /usr/bin.
+if [ ! -e /usr/bin/lpstat ] || grep -q "mizink-lpstat" /usr/bin/lpstat 2>/dev/null; then
+  printf '#!/bin/sh\n# mizink-lpstat shim\nexec /usr/local/bin/mizink-lpstat "$@"\n' > /usr/bin/lpstat
+  chmod 755 /usr/bin/lpstat
+else
+  echo "    -> a real lpstat (CUPS) exists; not replaced. 'Check if printer is idle' will use CUPS."
+fi
 
 echo "==> System user, spool, configuration"
 id mizink >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin mizink

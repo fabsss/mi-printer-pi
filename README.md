@@ -132,11 +132,28 @@ Admin center → **Share / Print Actions** → action "Printing" (and "Printing 
   mizink-enqueue --copies {copies} "{filename}"
   ```
 * **Printer name:** anything (e.g. `mi-printer`)
-* **Check if printer is idle:** **off** (it uses `lpstat`/CUPS, which is not involved here)
+* **Check if printer is idle:** **on**. The app then runs `lpstat -p <printer name>`; `install.sh`
+  installs a small shim (`/usr/bin/lpstat`) that answers from the worker's status. While the printer
+  is offline, printing or in an error state, the app refuses the print and shows its
+  "printer is not ready" message (if a real CUPS `lpstat` exists, the shim is not installed)
 * **Share blocked time:** ~60 s so guests don't trigger repeatedly
   (the queue is additionally limited to 10 jobs)
 
 Tip: design your collage/output as **2:3 portrait** (1040×1560 px is printed) to avoid cropping.
+
+## Error handling (no piles of identical photos)
+
+* The worker reads the printer status before every job. If the printer reports an error (paper out,
+  jam, cover open, ...), **nothing is printed and all waiting jobs are moved to `failed/`**.
+* `mizink-enqueue` refuses new jobs (exit code 2, plain-text reason on stderr) while the printer is
+  in an error state, offline, or the service is down. `--force` overrides this.
+* A job whose image has been fully sent is **never retried automatically** (it may already be printing).
+* The plain-text reason is in `mizink-enqueue --status` (`problem`) and in `journalctl -u mizink-worker`.
+  Error codes are shown as `Printer error -7101: ...`; add verified meanings to `mizink/errors.py`.
+
+**What the app can display:** the photobooth-app only shows fixed, translated messages
+("printer not ready", "process failed"); a command cannot supply its own text. The exact reason is
+therefore only visible in `mizink-enqueue --status`, the journal, and the app's own log.
 
 ## Troubleshooting
 
@@ -146,7 +163,7 @@ Tip: design your collage/output as **2:3 portrait** (1040×1560 px is printed) t
 | `timeout waiting for reply` | Wrong token (replies can't be decrypted) |
 | Link drops after ~15 s | No worker running, or `keep_awake: false` with no job – normal |
 | `printer stayed busy (-8006)` | Printer is warming up or still printing; check paper/cover |
-| Jobs end up in `/var/spool/mizink/failed/` | Failed `max_attempts` times (no paper, cover open, …). Fix the cause, then `mv` the files back into the spool folder |
+| Jobs end up in `/var/spool/mizink/failed/` | Printer reported an error, or the job failed `max_attempts` times. Fix the cause, then `mv` the files back into the spool folder (or print again from the app) |
 | Stale pairing | `bluetoothctl remove <MAC>`, then run `./pair.sh` again |
 
 ## Files

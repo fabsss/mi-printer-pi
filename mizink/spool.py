@@ -66,6 +66,19 @@ def _read_status() -> dict:
         return {}
 
 
+def refuse_reason(st: dict, now: float | None = None) -> str | None:
+    """Plain-text reason why new jobs should not be accepted right now, or None."""
+    now = time.time() if now is None else now
+    state = st.get("state")
+    if not st or now - st.get("updated", 0) > (400 if state == "printing" else 30):
+        return "print service not running (see: systemctl status mizink-worker)"
+    if st.get("problem"):
+        return st["problem"]
+    if state == "offline":
+        return "printer offline or switched off (" + str(st.get("last_error") or "no connection") + ")"
+    return None
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="mizink-enqueue",
                                  description="Queue an image for the Mi Portable Photo Printer.")
@@ -73,6 +86,7 @@ def main(argv=None) -> int:
     ap.add_argument("--copies", type=int, default=1)
     ap.add_argument("--max-queue", type=int, default=10)
     ap.add_argument("--status", action="store_true", help="show worker service status")
+    ap.add_argument("--force", action="store_true", help="queue even if the printer reports a problem")
     a = ap.parse_args(argv)
 
     if a.status:
@@ -82,15 +96,16 @@ def main(argv=None) -> int:
         return 0
     if not a.image:
         ap.error("image file missing")
+    reason = None if a.force else refuse_reason(_read_status())
+    if reason:
+        print(f"mizink-enqueue: NOT queued - {reason}", file=sys.stderr)
+        return 2
     try:
         meta = enqueue(a.image, a.copies, a.max_queue)
     except Exception as e:
         print(f"mizink-enqueue: {e}", file=sys.stderr)
         return 1
-    st = _read_status()
-    note = "" if st.get("state") in ("connected", "printing") else \
-        f" (printer currently: {st.get('state', 'unknown')} - job is waiting)"
-    print(f"queued {meta.stem}{note}")
+    print(f"queued {meta.stem}")
     return 0
 
 

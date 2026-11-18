@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import config as _config
 from . import spool as _spool
+from .errors import printer_problem
 from .printer import Printer, PrinterError
 
 log = logging.getLogger("mizink.worker")
@@ -37,6 +38,7 @@ class Worker:
         self.state = "starting"
         self.battery = None
         self.last_error = None
+        self.problem = None  # plain-text printer problem, None if healthy
         self._stop = False
 
     # -- Status ----------------------------------------------------------
@@ -44,7 +46,8 @@ class Worker:
         if state:
             self.state = state
         data = {"state": self.state, "battery": self.battery, "last_error": self.last_error,
-                "queue": len(_spool.pending(self.spool)), "updated": time.time(), **extra}
+                "problem": self.problem, "queue": len(_spool.pending(self.spool)),
+                "updated": time.time(), **extra}
         path = _spool.status_path()
         try:
             tmp = path.with_suffix(".tmp")
@@ -76,8 +79,32 @@ class Worker:
                         meta_path.stem, meta["attempts"], self.max_attempts, err)
             meta_path.write_text(json.dumps(meta))
 
+    def _abort_pending(self, problem: str) -> int:
+        """Move all waiting jobs to failed/ so nothing piles up and nothing prints twice later."""
+        failed = self.spool / "failed"
+        n = 0
+        for meta_path in _spool.pending(self.spool):
+            failed.mkdir(exist_ok=True)
+            for p in (meta_path, meta_path.with_suffix(".img")):
+                if p.exists():
+                    os.replace(p, failed / p.name)
+            log.error("Job %s moved to failed/ (not printed): %s", meta_path.stem, problem)
+            n += 1
+        return n
+
+    def _set_problem(self, problem: str | None) -> None:
+        self.problem = problem
+        if problem:
+            self.last_error = problem
+        self.set_status()
+
     def process_queue(self, printer: Printer) -> int:
-        """Print all waiting jobs. Re-raises on connection problems."""
+        """Print all waiting jobs. Re-raises on connection problems.
+
+        Safety rules against piles of identical photos:
+        * if the printer reports an error, no job is started and all waiting jobs go to failed/
+        * a job whose image data was fully sent is never retried automatically
+        """
         done = 0
         for meta_path in _spool.pending(self.spool):
             if self._stop:
@@ -95,19 +122,48 @@ class Worker:
                 log.error("Corrupt meta file %s: %s", meta_path, e)
                 meta_path.rename(meta_path.with_suffix(".bad"))
                 continue
+            problem = printer_problem(printer.status())
+            if problem:
+                self._set_problem(problem)
+                self._abort_pending(problem)
+                return done
+            self._set_problem(None)
             self.set_status("printing")
             log.info("Printing %s (%s, %dx)", meta_path.stem, meta.get("source"), meta.get("copies", 1))
+            sent = {"all": False}
+
+            def progress(i, n):
+                if i == n:
+                    sent["all"] = True
+
             try:
                 printer.print_image(self._prepare_image(img_path), copies=meta.get("copies", 1),
-                                    fit=self.fit, wait=True)
+                                    fit=self.fit, wait=True, on_progress=progress)
             except Exception as e:
-                self._fail_or_retry(meta_path, meta, e)
+                if sent["all"]:
+                    # image fully transferred: the photo may already be printing - never retry
+                    log.error("Job %s: error after sending the image, NOT retrying "
+                              "(check whether it was printed): %s", meta_path.stem, e)
+                    self.last_error = f"{type(e).__name__}: {e}"
+                    for p in (meta_path, img_path):
+                        p.unlink(missing_ok=True)
+                else:
+                    self._fail_or_retry(meta_path, meta, e)
                 raise
             for p in (meta_path, img_path):
                 p.unlink(missing_ok=True)
-            self.last_error = None
             done += 1
             log.info("Done: %s", meta_path.stem)
+            state = printer.last_job_info.get("job_state")
+            problem = printer_problem(printer.status())
+            if problem:
+                log.error("Job %s was sent, but the printer now reports: %s", meta_path.stem, problem)
+                self._set_problem(problem)
+                self._abort_pending(problem)
+                return done
+            if state != "finished":
+                log.warning("Job %s: printer did not confirm 'finished' (job_state=%s)", meta_path.stem, state)
+            self.last_error = None
         return done
 
     # -- Main loop ---------------------------------------------------
@@ -119,6 +175,7 @@ class Worker:
         while not self._stop:
             try:
                 if not self.keep_awake and not _spool.pending(self.spool):
+                    self.problem = None  # unknown while disconnected; re-checked on the next job
                     self.set_status("sleeping")
                     time.sleep(1)
                     continue
@@ -139,6 +196,10 @@ class Worker:
                             p.rpc("retime", [])
                             st = p.status()
                             self.battery = st.get("battery")
+                            problem = printer_problem(st)
+                            if problem and problem != self.problem:
+                                log.error("%s", problem)
+                            self.problem = problem
                             self.set_status("connected", printer_state=st.get("category"),
                                             printer_error=st.get("error"))
                         p.conn.pump(0.5)
@@ -146,6 +207,7 @@ class Worker:
                         log.warning("Connection closed by printer")
             except (OSError, ConnectionError, PrinterError) as e:
                 self.last_error = str(e)
+                self.problem = None
                 self.set_status("offline")
                 log.warning("Printer unreachable/error: %s (retrying in %.0fs)", e, backoff)
                 end = time.time() + backoff
