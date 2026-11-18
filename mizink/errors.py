@@ -5,7 +5,9 @@ from __future__ import annotations
 # Known printer error codes -> plain text. Only add codes whose meaning you have verified on your
 # own printer (e.g. by provoking them: open the cover, remove the paper, ...). Unknown codes get a
 # generic hint.
-ERROR_TEXT: dict[int, str] = {}
+ERROR_TEXT: dict[int, str] = {
+    -7101: "Out of paper - load a new ZINK paper pack",  # confirmed on a real printer
+}
 
 GENERIC_HINT = "check paper, cover/paper jam and battery, then switch the printer off and on"
 

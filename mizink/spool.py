@@ -66,6 +66,21 @@ def _read_status() -> dict:
         return {}
 
 
+def requeue_failed(spool: Path | None = None) -> int:
+    """Move jobs from failed/ back into the queue (after fixing the printer). Returns the count."""
+    spool = spool or spool_dir()
+    failed = spool / "failed"
+    n = 0
+    for meta in sorted(failed.glob("*.json")) if failed.is_dir() else []:
+        img = failed / (meta.stem + ".img")
+        if not img.is_file():
+            continue
+        os.replace(img, spool / img.name)
+        os.replace(meta, spool / meta.name)  # last: makes it visible to the worker
+        n += 1
+    return n
+
+
 def refuse_reason(st: dict, now: float | None = None) -> str | None:
     """Plain-text reason why new jobs should not be accepted right now, or None."""
     now = time.time() if now is None else now
@@ -86,6 +101,8 @@ def main(argv=None) -> int:
     ap.add_argument("--copies", type=int, default=1)
     ap.add_argument("--max-queue", type=int, default=10)
     ap.add_argument("--status", action="store_true", help="show worker service status")
+    ap.add_argument("--requeue-failed", action="store_true",
+                    help="put jobs from failed/ back into the queue (e.g. after reloading paper)")
     ap.add_argument("--force", action="store_true", help="queue even if the printer reports a problem")
     a = ap.parse_args(argv)
 
@@ -93,6 +110,9 @@ def main(argv=None) -> int:
         st = _read_status()
         print(json.dumps(st, indent=2) if st else "No status (is mizink-worker running?)")
         print(f"queued jobs: {len(pending(spool_dir())) if spool_dir().is_dir() else '?'}")
+        return 0
+    if a.requeue_failed:
+        print(f"re-queued {requeue_failed()} job(s)")
         return 0
     if not a.image:
         ap.error("image file missing")

@@ -53,7 +53,7 @@ class FakeConn:
                 self.jpegs.append(bytes(self.file))
                 self._reply(j["id"], ["OK"])
             elif m == "job_info":
-                self._reply(j["id"], [{"job_state": "finished", "prt_copies": 1}])
+                self._reply(j["id"], [{"job_state": getattr(self, "job_state", "finished"), "prt_copies": 1}])
             elif m == "retime":
                 self._reply(j["id"], ["OK"])
             # clean_data: no reply (like the real printer)
@@ -185,9 +185,32 @@ class ErrorHandling(unittest.TestCase):
                     p.conn.status = {"category": "error", "battery": 50, "error": -7101}
             p.conn.write = write
             w = Worker(spool, {}, None)
-            self.assertEqual(w.process_queue(p), 1)
+            self.assertEqual(w.process_queue(p), 0)                  # error seen while waiting
             self.assertEqual(p.conn.methods.count("print_job"), 1)   # exactly one print attempt
-            self.assertEqual(len(list((spool / "failed").glob("*.json"))), 2)
+            self.assertEqual(len(list((spool / "failed").glob("*.json"))), 3)  # photo + 2 waiting kept
+
+    def test_out_of_paper_detected_during_print_keeps_photo(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            spool = self._setup(d, n=2)
+            p = make_printer()
+            orig = p.conn.write
+
+            def write(frame):
+                orig(frame)
+                if "confirm_job" in p.conn.methods:  # paper runs out right after the job is accepted
+                    p.conn.status = {"category": "error", "battery": 50, "error": -7101}
+                    # the printer never reports "finished" for this job
+                    p.conn.job_state = "failed"
+            p.conn.write = write
+            w = Worker(spool, {}, None)
+            self.assertEqual(w.process_queue(p), 0)
+            self.assertIn("Out of paper", w.problem)
+            self.assertEqual(sp.pending(spool), [])
+            self.assertEqual(len(list((spool / "failed").glob("*.json"))), 2)  # both photos kept
+            # after reloading paper: re-queue
+            self.assertEqual(sp.requeue_failed(spool), 2)
+            self.assertEqual(len(sp.pending(spool)), 2)
 
     def test_no_retry_after_image_was_sent(self):
         with tempfile.TemporaryDirectory() as d:

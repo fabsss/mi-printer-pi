@@ -24,6 +24,10 @@ from .errors import printer_problem
 from .printer import Printer, PrinterError
 
 log = logging.getLogger("mizink.worker")
+
+
+class PrinterProblem(Exception):
+    """Raised from the status callback while a print is running, to stop waiting at once."""
 PING_INTERVAL = 5.0
 
 
@@ -136,9 +140,28 @@ class Worker:
                 if i == n:
                     sent["all"] = True
 
+            def watch(st):
+                # called about every 1.5 s while waiting for the print to finish
+                if "event" not in st:
+                    pr = printer_problem(st)
+                    if pr:
+                        raise PrinterProblem(pr)
+
             try:
                 printer.print_image(self._prepare_image(img_path), copies=meta.get("copies", 1),
-                                    fit=self.fit, wait=True, on_progress=progress)
+                                    fit=self.fit, wait=True, on_progress=progress, on_status=watch)
+            except PrinterProblem as e:
+                # e.g. out of paper: keep the photo in failed/ so it can be re-queued after the fix
+                problem = str(e)
+                log.error("Job %s stopped: %s (photo kept in failed/)", meta_path.stem, problem)
+                failed = self.spool / "failed"
+                failed.mkdir(exist_ok=True)
+                for p in (meta_path, img_path):
+                    if p.exists():
+                        os.replace(p, failed / p.name)
+                self._set_problem(problem)
+                self._abort_pending(problem)
+                return done
             except Exception as e:
                 if sent["all"]:
                     # image fully transferred: the photo may already be printing - never retry

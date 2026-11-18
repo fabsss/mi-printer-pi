@@ -148,6 +148,11 @@ Tip: design your collage/output as **2:3 portrait** (1040×1560 px is printed) t
 * `mizink-enqueue` refuses new jobs (exit code 2, plain-text reason on stderr) while the printer is
   in an error state, offline, or the service is down. `--force` overrides this.
 * A job whose image has been fully sent is **never retried automatically** (it may already be printing).
+* If the error appears *while* a print is running (typical for "out of paper": the printer only notices
+  when it tries to load a sheet), the worker stops waiting within ~2 s, logs
+  `Printer error -7101: Out of paper - ...` and keeps the photo (and all waiting ones) in `failed/`.
+  After reloading paper run `mizink-enqueue --requeue-failed` to print them (or print again from the app).
+  Once the printer reports healthy again (checked every 5 s), new prints are accepted automatically.
 * The plain-text reason is in `mizink-enqueue --status` (`problem`) and in `journalctl -u mizink-worker`.
   Error codes are shown as `Printer error -7101: ...`; add verified meanings to `mizink/errors.py`.
 
