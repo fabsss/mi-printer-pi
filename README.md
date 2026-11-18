@@ -135,7 +135,8 @@ Admin center → **Share / Print Actions** → action "Printing" (and "Printing 
 * **Check if printer is idle:** **on**. The app then runs `lpstat -p <printer name>`; `install.sh`
   installs a small shim (`/usr/bin/lpstat`) that answers from the worker's status. While the printer
   is offline, printing or in an error state, the app refuses the print and shows its
-  "printer is not ready" message (if a real CUPS `lpstat` exists, the shim is not installed)
+  "printer is not ready" message (an existing CUPS `lpstat` is moved to `/usr/bin/lpstat.real` via `dpkg-divert`; every call
+  other than `lpstat -p ...` is passed through to it)
 * **Share blocked time:** ~60 s so guests don't trigger repeatedly
   (the queue is additionally limited to 10 jobs)
 
@@ -182,7 +183,7 @@ tests/           offline tests with a simulated printer
 LICENSE.mizink   MIT license of the upstream project
 ```
 
-Uninstall: `sudo systemctl disable --now mizink-worker; sudo rm -rf /opt/mizink /etc/mizink /var/spool/mizink /usr/local/bin/mizink* /etc/systemd/system/mizink-worker.service`
+Uninstall: `sudo systemctl disable --now mizink-worker; sudo rm -f /usr/bin/lpstat; sudo dpkg-divert --rename --remove /usr/bin/lpstat; sudo rm -rf /opt/mizink /etc/mizink /var/spool/mizink /usr/local/bin/mizink* /etc/systemd/system/mizink-worker.service`
 
 ## License & disclaimer
 

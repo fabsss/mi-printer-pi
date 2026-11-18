@@ -30,12 +30,18 @@ done
 
 echo "==> lpstat shim (lets the photobooth-app's \"check if printer is idle\" see the printer state)"
 # The app calls `lpstat -p <name>` with a minimal PATH (/bin:/usr/bin), so it must live in /usr/bin.
-if [ ! -e /usr/bin/lpstat ] || grep -q "mizink-lpstat" /usr/bin/lpstat 2>/dev/null; then
-  printf '#!/bin/sh\n# mizink-lpstat shim\nexec /usr/local/bin/mizink-lpstat "$@"\n' > /usr/bin/lpstat
-  chmod 755 /usr/bin/lpstat
-else
-  echo "    -> a real lpstat (CUPS) exists; not replaced. 'Check if printer is idle' will use CUPS."
+# A real lpstat (CUPS) is moved aside with dpkg-divert (survives package upgrades) and is still
+# used by the shim for every call that is not `lpstat -p ...`.
+if [ -e /usr/bin/lpstat ] && ! grep -q "mizink-lpstat" /usr/bin/lpstat 2>/dev/null; then
+  dpkg-divert --local --rename --divert /usr/bin/lpstat.real --add /usr/bin/lpstat >/dev/null
+  echo "    -> real lpstat moved to /usr/bin/lpstat.real"
 fi
+cat > /usr/bin/lpstat <<'SHIM'
+#!/bin/sh
+# mizink-lpstat shim
+exec /usr/local/bin/mizink-lpstat "$@"
+SHIM
+chmod 755 /usr/bin/lpstat
 
 echo "==> System user, spool, configuration"
 id mizink >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin mizink

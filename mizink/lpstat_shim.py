@@ -9,11 +9,13 @@ This shim answers from the worker's status file, so the app refuses prints (and 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 
 from .spool import status_path
 
+REAL_LPSTAT = "/usr/bin/lpstat.real"  # CUPS original, moved aside by install.sh
 STALE_S = 30            # status older than this -> worker considered down
 STALE_PRINTING_S = 400  # the worker does not update the file while a print is running
 
@@ -35,6 +37,8 @@ def render(name: str, st: dict, now: float | None = None) -> str:
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if "-p" not in argv and os.path.exists(REAL_LPSTAT):
+        os.execv(REAL_LPSTAT, [REAL_LPSTAT] + argv)  # not a printer-status query: pass through
     name = argv[-1] if argv else "mizink"
     try:
         st = json.loads(status_path().read_text())
