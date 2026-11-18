@@ -48,6 +48,10 @@ id mizink >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin
 usermod -aG bluetooth mizink
 # Spool is group-writable only (mizink + the photobooth user), not world-writable.
 install -d -m 2770 -o mizink -g mizink /var/spool/mizink
+# failed/ is group-writable territory: never chmod through a symlink as root
+if [ -L /var/spool/mizink/failed ]; then
+  echo "    !! /var/spool/mizink/failed is a symlink - removing it"; rm -f /var/spool/mizink/failed
+fi
 [ -d /var/spool/mizink/failed ] && chmod 2770 /var/spool/mizink/failed || true
 install -d -m 750 -o root -g mizink /etc/mizink
 if [ ! -f /etc/mizink/config.json ]; then
