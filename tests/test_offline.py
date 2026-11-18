@@ -187,7 +187,7 @@ class ErrorHandling(unittest.TestCase):
             w = Worker(spool, {}, None)
             self.assertEqual(w.process_queue(p), 0)                  # error seen while waiting
             self.assertEqual(p.conn.methods.count("print_job"), 1)   # exactly one print attempt
-            self.assertEqual(len(list((spool / "failed").glob("*.json"))), 3)  # photo + 2 waiting kept
+            self.assertEqual(len(list((spool / "failed").glob("*.json"))), 2)  # sent job held by printer
 
     def test_out_of_paper_detected_during_print_keeps_photo(self):
         with tempfile.TemporaryDirectory() as d:
@@ -207,10 +207,11 @@ class ErrorHandling(unittest.TestCase):
             self.assertEqual(w.process_queue(p), 0)
             self.assertIn("Out of paper", w.problem)
             self.assertEqual(sp.pending(spool), [])
-            self.assertEqual(len(list((spool / "failed").glob("*.json"))), 2)  # both photos kept
-            # after reloading paper: re-queue
-            self.assertEqual(sp.requeue_failed(spool), 2)
-            self.assertEqual(len(sp.pending(spool)), 2)
+            # the job already sent is held by the printer (not kept, would print twice);
+            # the one that was still waiting is kept in failed/
+            self.assertEqual(len(list((spool / "failed").glob("*.json"))), 1)
+            self.assertEqual(sp.requeue_failed(spool), 1)
+            self.assertEqual(len(sp.pending(spool)), 1)
 
     def test_no_retry_after_image_was_sent(self):
         with tempfile.TemporaryDirectory() as d:

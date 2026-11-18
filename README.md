@@ -151,9 +151,16 @@ Tip: design your collage/output as **2:3 portrait** (1040×1560 px is printed) t
 * A job whose image has been fully sent is **never retried automatically** (it may already be printing).
 * If the error appears *while* a print is running (typical for "out of paper": the printer only notices
   when it tries to load a sheet), the worker stops waiting within ~2 s, logs
-  `Printer error -7101: Out of paper - ...` and keeps the photo (and all waiting ones) in `failed/`.
-  After reloading paper run `mizink-enqueue --requeue-failed` to print them (or print again from the app).
+  `Printer error -7101: Out of paper - ...`, and moves all *waiting* jobs to `failed/`.
+  **Verified on a real printer:** the printer reports "idle" while the paper is out and only raises
+  `-7101` when it tries to print. The job it already received stays inside the printer and is printed
+  **by the printer itself** as soon as paper is loaded – so the first guest's photo is not lost, and
+  the worker does not keep a second copy (re-queuing it would print it twice).
+  Jobs that were still waiting go to `failed/`; after reloading paper run
+  `mizink-enqueue --requeue-failed` to print them (or print again from the app).
   Once the printer reports healthy again (checked every 5 s), new prints are accepted automatically.
+  Because the error only appears while printing, the **first** guest after the paper ran out still sees
+  "printing"; from the second guest on the app shows "printer not ready".
 * The plain-text reason is in `mizink-enqueue --status` (`problem`) and in `journalctl -u mizink-worker`.
   Error codes are shown as `Printer error -7101: ...`; add verified meanings to `mizink/errors.py`.
 

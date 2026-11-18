@@ -72,8 +72,7 @@ class Worker:
         meta["attempts"] = meta.get("attempts", 0) + 1
         self.last_error = f"{type(err).__name__}: {err}"
         if meta["attempts"] >= self.max_attempts:
-            failed = self.spool / "failed"
-            failed.mkdir(exist_ok=True)
+            failed = self._failed_dir()
             log.error("Job %s failed permanently: %s", meta_path.stem, err)
             for p in (meta_path, self.spool / meta["image"]):
                 if p.exists():
@@ -83,12 +82,21 @@ class Worker:
                         meta_path.stem, meta["attempts"], self.max_attempts, err)
             meta_path.write_text(json.dumps(meta))
 
+    def _failed_dir(self) -> Path:
+        """failed/ must be group-writable so the photobooth user can re-queue from it."""
+        failed = self.spool / "failed"
+        failed.mkdir(exist_ok=True)
+        try:
+            os.chmod(failed, 0o2770)
+        except OSError:
+            pass
+        return failed
+
     def _abort_pending(self, problem: str) -> int:
         """Move all waiting jobs to failed/ so nothing piles up and nothing prints twice later."""
-        failed = self.spool / "failed"
         n = 0
         for meta_path in _spool.pending(self.spool):
-            failed.mkdir(exist_ok=True)
+            failed = self._failed_dir()
             for p in (meta_path, meta_path.with_suffix(".img")):
                 if p.exists():
                     os.replace(p, failed / p.name)
@@ -151,14 +159,14 @@ class Worker:
                 printer.print_image(self._prepare_image(img_path), copies=meta.get("copies", 1),
                                     fit=self.fit, wait=True, on_progress=progress, on_status=watch)
             except PrinterProblem as e:
-                # e.g. out of paper: keep the photo in failed/ so it can be re-queued after the fix
+                # e.g. out of paper. The printer already HOLDS this job (image fully sent and
+                # confirmed) and prints it by itself once the problem is fixed (verified for
+                # out-of-paper). So drop our copy: re-queuing it would print the photo twice.
                 problem = str(e)
-                log.error("Job %s stopped: %s (photo kept in failed/)", meta_path.stem, problem)
-                failed = self.spool / "failed"
-                failed.mkdir(exist_ok=True)
+                log.error("Job %s: %s. The printer keeps the job and prints it after the problem is "
+                          "fixed.", meta_path.stem, problem)
                 for p in (meta_path, img_path):
-                    if p.exists():
-                        os.replace(p, failed / p.name)
+                    p.unlink(missing_ok=True)
                 self._set_problem(problem)
                 self._abort_pending(problem)
                 return done
@@ -222,6 +230,9 @@ class Worker:
                             problem = printer_problem(st)
                             if problem and problem != self.problem:
                                 log.error("%s", problem)
+                            if self.problem and not problem:
+                                log.info("Printer problem cleared")
+                                self.last_error = None
                             self.problem = problem
                             self.set_status("connected", printer_state=st.get("category"),
                                             printer_error=st.get("error"))
